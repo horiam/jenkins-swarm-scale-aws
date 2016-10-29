@@ -1,0 +1,11 @@
+[Unit]
+Description=Jenkins swarm client service
+After=network-online.target
+
+[Service]
+Type=simple
+User=jenkins
+Group=jenkins
+EnvironmentFile=/home/jenkins/swarm.env
+ExecStart=/home/jenkins/swarm.sh
+

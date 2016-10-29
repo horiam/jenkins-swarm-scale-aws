@@ -1,208 +1,136 @@
-{
-  "AWSTemplateFormatVersion": "2010-09-09",
-  "Resources": {
-    "asgJenkinsAutoScalingGroup": {
-      "Type": "AWS::AutoScaling::AutoScalingGroup",
-      "Properties": {
-        "AvailabilityZones": [
-          "ap-southeast-2a"
-        ],
-        "Cooldown": "300",
-        "DesiredCapacity": "1",
-        "HealthCheckGracePeriod": "200",
-        "HealthCheckType": "EC2",
-        "MaxSize": "2",
-        "MinSize": "1",
-        "VPCZoneIdentifier": [
-	   { "Ref" : "YourSubnetId" }          
-        ],
-        "LaunchConfigurationName": {
-          "Ref": "lcSwarmLaunchConfiguration"
-        },
-        "TerminationPolicies": [
-          "Default"
-        ]
-      }
-    },
-    "lcSwarmLaunchConfiguration": {
-      "Type": "AWS::AutoScaling::LaunchConfiguration",
-      "Properties": {
-        "ImageId": "ami-55d4e436",
-        "InstanceType": "t2.micro",
-        "KeyName": { "Ref" : "YourKeyPair" },
-        "SecurityGroups": [
-          {
-            "Ref": "sgjenkinsswarmnodes"
-          }
-        ],
-        "BlockDeviceMappings": [
-          {
-            "DeviceName": "/dev/xvda",
-            "Ebs": {
-              "VolumeSize": 8
-            }
-          }
-        ],
-	"UserData" :  {"Fn::Base64": {"Fn::Join": ["", [ 
-"#!/bin/bash -ex\n",
-"exec > >(tee /var/log/user-data.log|logger -t user-data -s 2>/dev/console) 2>&1\n",
-"JENKINS_SERVER='", { "Ref" : "JenkinsServerURL" }, "'\n",
-"JENKINS_USER='", { "Ref" : "JenkinsServerUser" }, "'\n",
-"JENKINS_PASSWORD='", { "Ref" : "JenkinsServerPassword" }, "'\n",
-"LOGS=/var/log/swarm.log \n",
-"useradd jenkins\n",
-"su - jenkins -c 'wget -O ~/swarm.jar https://repo.jenkins-ci.org/releases/org/jenkins-ci/plugins/swarm-client/2.2/swarm-client-2.2-jar-with-dependencies.jar'\n",
-"touch $LOGS\n",
-"chown jenkins:jenkins $LOGS\n",
-"cat << EOF > /etc/init.d/swarm\n",
-"#!/bin/bash\n",
-"# chkconfig: 34 99 01\n",
-"# description: jenkins swarm script\n",
-"case \"\\$1\" in\n",
-"start)\n",
-"   su - jenkins -c 'java -jar /home/jenkins/swarm.jar -master $JENKINS_SERVER -username $JENKINS_USER -password $JENKINS_PASSWORD > $LOGS 2>&1 & echo \\$!' > /var/run/swarm.pid\n",
-"   touch /var/lock/subsys/swarm\n",
-"   ;;\n",
-"stop)\n",
-"   touch /root/beforestop\n",
-"   kill \\$(cat /var/run/swarm.pid)\n",
-"   rm /var/run/swarm.pid\n",
-"   rm -f /var/lock/subsys/swarm\n",
-"   touch /root/stopped\n",
-"   ;;\n",
-"restart)\n",
-"   \\$0 stop\n",
-"   \\$0 start\n",
-"   ;;\n",
-"*)\n",
-"esac\n",
-"exit 0\n",
-"EOF\n",
-"chmod +x /etc/init.d/swarm\n",
-"chkconfig --add swarm\n",
-"service swarm start\n"]]}}
-	}
-    },
-    "sgjenkinsswarmnodes": {
-      "Type": "AWS::EC2::SecurityGroup",
-      "Properties": {
-        "GroupDescription": "jenkins swarm nodes",
-        "VpcId": { "Ref" : "YourVPCId" }
-      }
-    },
-    "scalingDecreaseGroupSize": {
-      "Type": "AWS::AutoScaling::ScalingPolicy",
-      "Properties": {
-        "AdjustmentType": "ChangeInCapacity",
-        "AutoScalingGroupName": {
-          "Ref": "asgJenkinsAutoScalingGroup"
-        },
-	"ScalingAdjustment" : "-1"
-      }
-    },
-    "scalingIncreaseGroupSize": {
-      "Type": "AWS::AutoScaling::ScalingPolicy",
-      "Properties": {
-        "AdjustmentType": "ChangeInCapacity",
-        "AutoScalingGroupName": {
-          "Ref": "asgJenkinsAutoScalingGroup"
-        },
-	"ScalingAdjustment" : "1"
-      }
-    },
-    "alarmJenkinsBusyNodes": {
-      "Type": "AWS::CloudWatch::Alarm",
-      "Properties": {
-        "ActionsEnabled": "true",
-        "ComparisonOperator": "LessThanOrEqualToThreshold",
-        "EvaluationPeriods": "1",
-        "MetricName": "busy-nodes",
-        "Namespace": "jenkins",
-        "Period": "60",
-        "Statistic": "Maximum",
-        "Threshold": "0.0",
-        "AlarmActions": [
-          {
-            "Ref": "scalingDecreaseGroupSize"
-          }
-        ]
-      }
-    },
-    "alarmJenkinsQueueSize": {
-      "Type": "AWS::CloudWatch::Alarm",
-      "Properties": {
-        "ActionsEnabled": "true",
-        "ComparisonOperator": "GreaterThanOrEqualToThreshold",
-        "EvaluationPeriods": "1",
-        "MetricName": "queue-size",
-        "Namespace": "jenkins",
-        "Period": "60",
-        "Statistic": "Minimum",
-        "Threshold": "2.0",
-        "AlarmActions": [
-          {
-            "Ref": "scalingIncreaseGroupSize"
-          }
-        ]
-      }
-    },
-    "ingress8": {
-      "Type": "AWS::EC2::SecurityGroupIngress",
-      "Properties": {
-        "GroupId": {
-          "Ref": "sgjenkinsswarmnodes"
-        },
-        "IpProtocol": "tcp",
-        "FromPort": "22",
-        "ToPort": "22",
-        "CidrIp": "0.0.0.0/0"
-      }
-    },
-    "ingress7": {
-      "Type": "AWS::EC2::SecurityGroupIngress",
-      "Properties": {
-        "GroupId": {
-          "Ref": "JenkinsServerSecurityGroup"
-        },
-        "IpProtocol": "tcp",
-        "FromPort": "8500",
-        "ToPort": "8500",
-        "SourceSecurityGroupId": {
-          "Ref": "sgjenkinsswarmnodes"
-        }
-      }
-    }
-  },
-  "Parameters" : {
-     "JenkinsServerURL" : {
-	"Type" : "String",
-	"Description" : "The Jenkins master URL to connect to"
-     },
-     "JenkinsServerUser" : {
-	"Type" : "String",
-	"Description" : "The Jenkins master user"
-     },
-     "JenkinsServerPassword" : {
-	"Type" : "String",
-	"Description" : "The Jenkins master password",
-	"NoEcho" : "true"
-     },
-     "JenkinsServerSecurityGroup" : {
-	"Type" : "AWS::EC2::SecurityGroup::Id",
-	"Description" : "The Jenkins master security group"
-     },
-     "YourVPCId" : {
-	"Type" : "AWS::EC2::VPC::Id",
-	"Description" : "Your VPC Id"
-     },
-     "YourSubnetId" : {
-	"Type" : "AWS::EC2::Subnet::Id",
-	"Description" : "Your subnet Id"
-     },
-     "YourKeyPair" : {
-	"Type" : "AWS::EC2::KeyPair::KeyName",
-	"Description" : "Your Key pair name"
-     }
-  },
-  "Description": ""
-}
+---
+AWSTemplateFormatVersion: 2010-09-09
+Description: ''
+Resources:
+  asgJenkinsAutoScalingGroup:
+    Type: AWS::AutoScaling::AutoScalingGroup
+    Properties:
+      AvailabilityZones:
+      - ap-southeast-2a
+      Cooldown: 30
+      DesiredCapacity: 1
+      HealthCheckGracePeriod: 200
+      HealthCheckType: EC2
+      MaxSize: 2
+      MinSize: 1
+      VPCZoneIdentifier:
+      - Ref: YourSubnetId
+      LaunchConfigurationName:
+        Ref: lcSwarmLaunchConfiguration
+      TerminationPolicies:
+      - Default
+  sgjenkinsswarmnodes:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: jenkins swarm nodes
+      VpcId:
+        Ref: YourVPCId
+  scalingDecreaseGroupSize:
+    Type: AWS::AutoScaling::ScalingPolicy
+    Properties:
+      AdjustmentType: ChangeInCapacity
+      AutoScalingGroupName:
+        Ref: asgJenkinsAutoScalingGroup
+      ScalingAdjustment: "-1"
+  scalingIncreaseGroupSize:
+    Type: AWS::AutoScaling::ScalingPolicy
+    Properties:
+      AdjustmentType: ChangeInCapacity
+      AutoScalingGroupName:
+        Ref: asgJenkinsAutoScalingGroup
+      ScalingAdjustment: 1
+  alarmJenkinsBusyNodes:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      ActionsEnabled: true
+      ComparisonOperator: LessThanOrEqualToThreshold
+      EvaluationPeriods: 1
+      MetricName: busy-nodes
+      Namespace: jenkins
+      Period: 60
+      Statistic: Maximum
+      Threshold: 0.0
+      AlarmActions:
+      - Ref: scalingDecreaseGroupSize
+  alarmJenkinsQueueSize:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      ActionsEnabled: true
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      EvaluationPeriods: 1
+      MetricName: queue-size
+      Namespace: jenkins
+      Period: 60
+      Statistic: Minimum
+      Threshold: 2.0
+      AlarmActions:
+      - Ref: scalingIncreaseGroupSize
+  ingress8:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId:
+        Ref: sgjenkinsswarmnodes
+      IpProtocol: tcp
+      FromPort: 22
+      ToPort: 22
+      CidrIp: 0.0.0.0/0
+  ingress7:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId:
+        Ref: JenkinsServerSecurityGroup
+      IpProtocol: tcp
+      FromPort: 8500
+      ToPort: 8500
+      SourceSecurityGroupId:
+        Ref: sgjenkinsswarmnodes
+  lcSwarmLaunchConfiguration:
+    Type: AWS::AutoScaling::LaunchConfiguration
+    Properties:
+      ImageId: 
+        Ref: SwarmAmi
+      InstanceType: t2.micro
+      KeyName:
+        Ref: YourKeyPair
+      SecurityGroups:
+      - Ref: sgjenkinsswarmnodes
+      BlockDeviceMappings:
+      - DeviceName: /dev/xvda
+        Ebs:
+          VolumeSize: 8
+      UserData:
+        Fn::Base64: !Sub |
+           #!/bin/bash
+           exec > >(tee /var/log/user-data.log|logger -t user-data -s 2>/dev/console) 2>&1
+           cat << EOF > /home/jenkins/swarm.env
+           JENKINS_SERVER=${JenkinsServerURL}
+           JENKINS_USER=${JenkinsServerUser}
+           JENKINS_PASSWORD=${JenkinsServerPassword}
+           EOF
+           systemctl start swarm
+Parameters:
+  JenkinsServerURL:
+    Type: String
+    Description: The Jenkins master URL to connect to
+  JenkinsServerUser:
+    Type: String
+    Description: The Jenkins master user
+  JenkinsServerPassword:
+    Type: String
+    Description: The Jenkins master password
+    NoEcho: true
+  JenkinsServerSecurityGroup:
+    Type: AWS::EC2::SecurityGroup::Id
+    Description: The Jenkins master security group
+  YourVPCId:
+    Type: AWS::EC2::VPC::Id
+    Description: Your VPC Id
+  YourSubnetId:
+    Type: AWS::EC2::Subnet::Id
+    Description: Your subnet Id
+  YourKeyPair:
+    Type: AWS::EC2::KeyPair::KeyName
+    Description: Your Key pair name
+  SwarmAmi:
+    Type: AWS::EC2::Image::Id
+    Description: The swarm ami you have built with Packer

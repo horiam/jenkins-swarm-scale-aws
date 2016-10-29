@@ -1,0 +1,56 @@
+{
+  "variables": {
+    "aws_access_key": "",
+    "aws_secret_key": "",
+    "vpc_id": "",
+    "subnet_id": "",
+    "sg_id": "",
+    "swarm_source": "https://repo.jenkins-ci.org/releases/org/jenkins-ci/plugins/swarm-client/2.2/swarm-client-2.2-jar-with-dependencies.jar"
+  },
+  "builders": [{
+    "vpc_id": "{{user `vpc_id`}}",
+    "subnet_id": "{{user `subnet_id`}}",
+    "type": "amazon-ebs",
+    "access_key": "{{user `aws_access_key`}}",
+    "secret_key": "{{user `aws_secret_key`}}",
+    "region": "ap-southeast-2",
+    "source_ami": "ami-623c0d01",
+    "instance_type": "t2.micro",
+    "ssh_username": "ubuntu",
+    "ami_name": "jenkins-swarm-client {{timestamp}}",
+    "security_group_id": "{{user `sg_id`}}"
+  }],
+  "provisioners": [{
+    "type": "shell",
+    "inline": [
+      "sleep 20",
+      "sudo apt-get --assume-yes update",
+      "sudo apt-get --assume-yes install openjdk-8-jre-headless",
+      "sudo useradd -m jenkins"
+    ]
+  },
+  {
+	"type" : "file",
+	"source" : "swarm.service",
+	"destination" : "~/swarm.service"
+  },
+  {
+	"type" : "file",
+	"source" : "swarm.sh",
+	"destination" : "~/swarm.sh"
+  },
+  {
+	"type" : "shell",
+	"inline" : [
+	  "sudo mv ~/swarm.service /etc/systemd/system/swarm.service",
+	  "sudo chown root:root /etc/systemd/system/swarm.service",
+	  "sudo mv ~/swarm.sh /home/jenkins/swarm.sh",
+	  "sudo chown jenkins:jenkins /home/jenkins/swarm.sh",
+	  "sudo chmod +x /home/jenkins/swarm.sh",
+	  "wget -O ~/swarm.jar {{user `swarm_source`}}",
+	  "sudo mv ~/swarm.jar /home/jenkins/swarm.jar",
+	  "sudo chown jenkins:jenkins /home/jenkins/swarm.jar"
+	]
+  }
+]
+}
