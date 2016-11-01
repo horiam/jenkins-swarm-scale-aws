@@ -1,0 +1,10 @@
+[Unit]
+Description=Jenkins server service
+After=network-online.target
+
+[Service]
+Type=simple
+User=jenkins
+Group=jenkins
+ExecStart=/home/jenkins/jenkins.sh
+

@@ -26,6 +26,8 @@
       "sleep 20",
       "sudo apt-get --assume-yes update",
       "sudo apt-get --assume-yes install openjdk-8-jre-headless",
+      "sudo apt-get --assume-yes install awscli",
+      "sudo apt-get --assume-yes install jq",
       "sudo useradd -m jenkins"
     ]
   },
@@ -44,12 +46,10 @@
 	"inline" : [
 	  "sudo mv ~/swarm.service /etc/systemd/system/swarm.service",
 	  "sudo chown root:root /etc/systemd/system/swarm.service",
-	  "sudo mv ~/swarm.sh /home/jenkins/swarm.sh",
-	  "sudo chown jenkins:jenkins /home/jenkins/swarm.sh",
-	  "sudo chmod +x /home/jenkins/swarm.sh",
-	  "wget -O ~/swarm.jar {{user `swarm_source`}}",
-	  "sudo mv ~/swarm.jar /home/jenkins/swarm.jar",
-	  "sudo chown jenkins:jenkins /home/jenkins/swarm.jar"
+	  "sudo mv ~/swarm.sh ~jenkins/swarm.sh",
+	  "sudo chown jenkins:jenkins ~jenkins/swarm.sh",
+	  "sudo chmod +x ~jenkins/swarm.sh",
+	  "sudo -iu jenkins wget -O ~jenkins/swarm.jar {{user `swarm_source`}}"
 	]
   }
 ]

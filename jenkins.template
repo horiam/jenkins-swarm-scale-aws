@@ -1,0 +1,302 @@
+---
+AWSTemplateFormatVersion: 2010-09-09
+Description: ''
+Resources:
+  instJenkinsServer:
+    Type: AWS::EC2::Instance
+    Properties:
+        IamInstanceProfile:
+          Ref: JenkinsServerInstanceProfile
+        ImageId:
+          Ref: ServerAmi
+        InstanceType: t2.micro
+        KeyName:
+          Ref: YourKeyPair
+        BlockDeviceMappings:
+          - DeviceName: /dev/xvda
+            Ebs:
+              VolumeSize: 8
+        NetworkInterfaces:
+          - AssociatePublicIpAddress: true
+            DeviceIndex: 0
+            GroupSet:
+              - Ref: sgJenkinsServer
+            SubnetId:
+              Ref: YourSubnetId
+        UserData:
+          Fn::Base64: !Sub |
+            #!/bin/bash -ex
+            exec > >(tee /var/log/user-data.log|logger -t user-data -s 2>/dev/console) 2>&1
+            PORT=8500
+            USER=''${JenkinsServerUser}''
+            PASSWORD=''${JenkinsServerPassword}''
+            NAMESPACE=''${AWS::StackName}''
+            systemctl start jenkins
+            sleep 3m
+            cd ~jenkins
+            ./scriptText.sh << EOF
+            import jenkins.model.*
+            import hudson.security.*
+            def instance = Jenkins.getInstance()
+            instance.setSlaveAgentPort($PORT)
+            instance.setNumExecutors(0)
+            def hudsonRealm = new HudsonPrivateSecurityRealm(false)
+            hudsonRealm.createAccount("$USER","$PASSWORD")
+            instance.setSecurityRealm(hudsonRealm)
+            instance.save()
+            EOF
+            cat << EOF > metrics.env
+            USER=$USER
+            PASSWORD=$PASSWORD
+            NAMESPACE=$NAMESPACE
+            EOF
+            systemctl start metrics
+  sgJenkinsServer:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: jenkins server
+      VpcId:
+        Ref: YourVPCId
+  ingress5:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId:
+        Ref: sgJenkinsServer
+      IpProtocol: tcp
+      FromPort: 22
+      ToPort: 22
+      CidrIp: 0.0.0.0/0
+  ingress6:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId:
+        Ref: sgJenkinsServer
+      IpProtocol: tcp
+      FromPort: 8080
+      ToPort: 8080
+      CidrIp: 0.0.0.0/0
+  asgJenkinsAutoScalingGroup:
+    Type: AWS::AutoScaling::AutoScalingGroup
+    Properties:
+      AvailabilityZones:
+      - Ref: AZ
+      Cooldown: 30
+      DesiredCapacity: 1
+      HealthCheckGracePeriod: 200
+      HealthCheckType: EC2
+      MaxSize:
+        Ref: MaxScale
+      MinSize: 1
+      VPCZoneIdentifier:
+      - Ref: YourSubnetId
+      LaunchConfigurationName:
+        Ref: lcSwarmLaunchConfiguration
+      TerminationPolicies:
+      - Default
+  sgjenkinsswarmnodes:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: jenkins swarm nodes
+      VpcId:
+        Ref: YourVPCId
+  scalingDecreaseGroupSize:
+    Type: AWS::AutoScaling::ScalingPolicy
+    Properties:
+      AdjustmentType: ChangeInCapacity
+      AutoScalingGroupName:
+        Ref: asgJenkinsAutoScalingGroup
+      ScalingAdjustment: "-1"
+  scalingIncreaseGroupSize:
+    Type: AWS::AutoScaling::ScalingPolicy
+    Properties:
+      AdjustmentType: ChangeInCapacity
+      AutoScalingGroupName:
+        Ref: asgJenkinsAutoScalingGroup
+      ScalingAdjustment: 1
+  alarmJenkinsBusyNodes:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      ActionsEnabled: true
+      ComparisonOperator: LessThanOrEqualToThreshold
+      EvaluationPeriods: 1
+      MetricName: busy-nodes
+      Namespace:
+        Ref: AWS::StackName
+      Period: 60
+      Statistic: Maximum
+      Threshold: 0.0
+      AlarmActions:
+      - Ref: scalingDecreaseGroupSize
+  alarmJenkinsQueueSize:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      ActionsEnabled: true
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      EvaluationPeriods: 1
+      MetricName: queue-size
+      Namespace:
+        Ref: AWS::StackName
+      Period: 60
+      Statistic: Minimum
+      Threshold: 2.0
+      AlarmActions:
+      - Ref: scalingIncreaseGroupSize
+  ingress8:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId:
+        Ref: sgjenkinsswarmnodes
+      IpProtocol: tcp
+      FromPort: 22
+      ToPort: 22
+      CidrIp: 0.0.0.0/0
+  ingress7:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId:
+        Ref: sgJenkinsServer
+      IpProtocol: tcp
+      FromPort: 8500
+      ToPort: 8500
+      SourceSecurityGroupId:
+        Ref: sgjenkinsswarmnodes
+  lcSwarmLaunchConfiguration:
+    Type: AWS::AutoScaling::LaunchConfiguration
+    DependsOn: instJenkinsServer
+    Properties:
+      ImageId: 
+        Ref: SwarmAmi
+      InstanceType: t2.micro
+      IamInstanceProfile:
+        Ref: JenkinsSlaveInstanceProfile
+      KeyName:
+        Ref: YourKeyPair
+      SecurityGroups:
+      - Ref: sgjenkinsswarmnodes
+      BlockDeviceMappings:
+      - DeviceName: /dev/xvda
+        Ebs:
+          VolumeSize: 8
+      UserData:
+        Fn::Base64: !Sub |
+           #!/bin/bash -ex
+           exec > >(tee /var/log/user-data.log|logger -t user-data -s 2>/dev/console) 2>&1
+           cat << EOF > /home/jenkins/swarm.env
+           STACK_NAME=${AWS::StackName}
+           JENKINS_USER=${JenkinsServerUser}
+           JENKINS_PASSWORD=${JenkinsServerPassword}
+           EOF
+           systemctl start swarm
+  JenkinsServerInstanceProfile:
+    Type: "AWS::IAM::InstanceProfile"
+    Properties:
+      Path: "/"
+      Roles:
+        - Ref: JenkinsServerRole
+  JenkinsSlaveInstanceProfile:
+    Type: "AWS::IAM::InstanceProfile"
+    Properties:
+      Path: "/"
+      Roles:
+        - Ref: JenkinsSlaveRole
+  JenkinsServerRole:
+    Type: "AWS::IAM::Role"
+    Properties:
+      Path: "/"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          -
+            Effect: "Allow"
+            Principal:
+               Service:
+                 - "ec2.amazonaws.com"
+            Action:
+              - "sts:AssumeRole"
+      Policies:
+          -
+            PolicyName: "JenkinsServerPolicy"
+            PolicyDocument:
+               Version: "2012-10-17"
+               Statement:
+                  -
+                    Effect: "Allow"
+                    Action: "cloudwatch:PutMetricData"
+                    Resource: "*"
+  JenkinsSlaveRole:
+    Type: "AWS::IAM::Role"
+    Properties:
+      Path: "/"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          -
+            Effect: "Allow"
+            Principal:
+               Service:
+                 - "ec2.amazonaws.com"
+            Action:
+              - "sts:AssumeRole"
+      Policies:
+          -
+            PolicyName: "JenkinsSlavePolicy"
+            PolicyDocument:
+               Version: "2012-10-17"
+               Statement:
+                  -
+                    Effect: "Allow"
+                    Action: "ec2:Describe*"
+                    Resource: "*"
+                  -
+                    Effect: "Allow"
+                    Action: "cloudformation:DescribeStacks"
+                    Resource: "*"
+                  -
+                    Effect: "Allow"
+                    Action: "cloudformation:DescribeStackResource"
+                    Resource: "*"
+                  -
+                    Effect: "Allow"
+                    Action: "cloudformation:DescribeStackResources"
+                    Resource: "*"
+                  -
+                    Effect: "Allow"
+                    Action: "cloudformation:GetTemplate"
+                    Resource: "*"
+Parameters:
+  MaxScale:
+    Type: Number
+    Default: 2
+    MinValue: 2
+    MaxValue: 10
+    Description: The max number of slaves
+  AZ:
+    Type: AWS::EC2::AvailabilityZone::Name
+    Default: ap-southeast-2a
+    Description: The AvailabilityZone of the stack
+  JenkinsServerUser:
+    Type: String
+    Description: The Jenkins master user
+  JenkinsServerPassword:
+    Type: String
+    Description: The Jenkins master password
+    NoEcho: true
+  YourVPCId:
+    Type: AWS::EC2::VPC::Id
+    Description: Your VPC Id
+  YourSubnetId:
+    Type: AWS::EC2::Subnet::Id
+    Description: Your subnet Id
+  YourKeyPair:
+    Type: AWS::EC2::KeyPair::KeyName
+    Description: Your Key pair name
+  SwarmAmi:
+    Type: AWS::EC2::Image::Id
+    Description: The swarm ami you have built with Packer
+  ServerAmi:
+    Type: AWS::EC2::Image::Id
+    Description: The jenkins server ami you have built with Packer
+Outputs:
+  JenkinsServerURL:
+    Description: "Jenkins server URL"
+    Value: !Join [ "", [ "http://", !GetAtt instJenkinsServer.PublicDnsName, ":8080" ]]

@@ -8,4 +8,3 @@ User=jenkins
 Group=jenkins
 EnvironmentFile=/home/jenkins/swarm.env
 ExecStart=/home/jenkins/swarm.sh
-

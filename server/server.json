@@ -1,0 +1,88 @@
+{
+  "variables": {
+    "aws_access_key": "",
+    "aws_secret_key": "",
+    "vpc_id": "",
+    "subnet_id": "",
+    "sg_id": "",
+    "jenkins_source": "https://updates.jenkins-ci.org/download/war/2.19.1/jenkins.war",
+    "swarm_plugin_source": "http://updates.jenkins-ci.org/latest/swarm.hpi"
+  },
+  "builders": [
+    {
+      "vpc_id": "{{user `vpc_id`}}",
+      "subnet_id": "{{user `subnet_id`}}",
+      "type": "amazon-ebs",
+      "access_key": "{{user `aws_access_key`}}",
+      "secret_key": "{{user `aws_secret_key`}}",
+      "region": "ap-southeast-2",
+      "source_ami": "ami-623c0d01",
+      "instance_type": "t2.micro",
+      "ssh_username": "ubuntu",
+      "ami_name": "jenkins-swarm-server {{timestamp}}",
+      "security_group_id": "{{user `sg_id`}}"
+    }
+  ],
+  "provisioners": [
+    {
+      "type": "shell",
+      "inline": [
+        "sleep 20",
+        "sudo apt-get --assume-yes update",
+        "sudo apt-get --assume-yes install openjdk-8-jre-headless",
+        "sudo apt-get --assume-yes install libxml2-utils",
+        "sudo apt-get --assume-yes install awscli",
+        "sudo apt-get --assume-yes install jq",
+        "sudo useradd -m jenkins"
+      ]
+    },
+    {
+      "type": "file",
+      "source": "jenkins.sh",
+      "destination": "~/jenkins.sh"
+    },
+    {
+      "type": "file",
+      "source": "jenkins.service",
+      "destination": "~/jenkins.service"
+    },
+    {
+      "type": "file",
+      "source": "metrics.sh",
+      "destination": "~/metrics.sh"
+    },
+    {
+      "type": "file",
+      "source": "metrics.service",
+      "destination": "~/metrics.service"
+    },
+    {
+      "type": "file",
+      "source": "scriptText.sh",
+      "destination": "~/scriptText.sh"
+    },
+    {
+      "type": "shell",
+      "inline": [
+        "sudo mv ~/metrics.sh ~jenkins/metrics.sh",
+        "sudo chown jenkins:jenkins ~jenkins/metrics.sh",
+        "sudo chmod +x ~jenkins/metrics.sh",
+        "sudo mv ~/jenkins.service /etc/systemd/system/jenkins.service",
+        "sudo chown root:root /etc/systemd/system/jenkins.service",
+        "sudo mv ~/jenkins.sh ~jenkins/jenkins.sh",
+        "sudo chown jenkins:jenkins ~jenkins/jenkins.sh",
+        "sudo chmod +x ~jenkins/jenkins.sh",
+        "sudo mv ~/scriptText.sh ~jenkins/scriptText.sh",
+        "sudo chown jenkins:jenkins ~jenkins/scriptText.sh",
+        "sudo chmod +x ~jenkins/scriptText.sh",
+        "sudo mv ~/metrics.service /etc/systemd/system/metrics.service",
+        "sudo chown root:root /etc/systemd/system/metrics.service",
+        "sudo -iu jenkins wget -O ~jenkins/jenkins.war {{user `jenkins_source`}}",
+        "sudo systemctl start jenkins",
+        "sleep 30s",
+        "sudo -iu jenkins wget -O ~jenkins/.jenkins/plugins/swarm.hpi {{user `swarm_plugin_source`}}",
+        "sudo systemctl stop jenkins"
+      ]
+    }
+  ]
+}

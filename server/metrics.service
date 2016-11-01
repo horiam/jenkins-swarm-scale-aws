@@ -1,0 +1,11 @@
+[Unit]
+Description=Jenkins server metrics service
+After=jenkins.service
+
+[Service]
+Type=simple
+User=jenkins
+Group=jenkins
+EnvironmentFile=/home/jenkins/metrics.env
+ExecStart=/home/jenkins/metrics.sh
+
