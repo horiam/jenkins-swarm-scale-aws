@@ -5,7 +5,8 @@
     "vpc_id": "",
     "subnet_id": "",
     "sg_id": "",
-    "swarm_source": "https://repo.jenkins-ci.org/releases/org/jenkins-ci/plugins/swarm-client/2.2/swarm-client-2.2-jar-with-dependencies.jar"
+    "swarm_source": "https://repo.jenkins-ci.org/releases/org/jenkins-ci/plugins/swarm-client/2.2/swarm-client-2.2-jar-with-dependencies.jar",
+    "ami": "ami-4d3b062e"
   },
   "builders": [{
     "vpc_id": "{{user `vpc_id`}}",
@@ -14,7 +15,7 @@
     "access_key": "{{user `aws_access_key`}}",
     "secret_key": "{{user `aws_secret_key`}}",
     "region": "ap-southeast-2",
-    "source_ami": "ami-623c0d01",
+    "source_ami": "{{user `ami`}}",
     "instance_type": "t2.micro",
     "ssh_username": "ubuntu",
     "ami_name": "jenkins-swarm-client {{timestamp}}",
